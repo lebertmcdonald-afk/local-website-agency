@@ -1,0 +1,101 @@
+{
+  "name": "NYC Home-Service Lead Finder",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "node-schedule",
+      "name": "Every morning 9am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Find NYC home-service businesses with great reviews but NO website.\n// Replace the API key below, or store it in n8n credentials and reference it.\nconst API_KEY = 'PASTE_YOUR_PLACES_API_KEY_HERE';\nconst MIN_RATING = 4.3;\nconst MIN_REVIEWS = 15;\n\n// Trade -> Google Maps searches. Add/trim neighborhoods or trades as you like.\nconst TRADES = {\n  'Pest Control': [\n    'exterminator Astoria Queens NY', 'pest control Flushing Queens NY',\n    'exterminator Jamaica Queens NY', 'pest control Bay Ridge Brooklyn NY',\n    'exterminator Bushwick Brooklyn NY', 'pest control Flatbush Brooklyn NY',\n    'exterminator Fordham Bronx NY', 'pest control Staten Island NY',\n  ],\n  'Plumber': [\n    'plumber Astoria Queens NY', 'plumber Flushing Queens NY',\n    'plumber Bay Ridge Brooklyn NY', 'plumber Fordham Bronx NY',\n  ],\n};\n\nconst FIELD_MASK = 'places.id,places.displayName,places.rating,places.userRatingCount,places.websiteUri,places.nationalPhoneNumber,places.formattedAddress,places.googleMapsUri';\nconst SOCIAL = ['facebook.com', 'instagram.com', 'yelp.com', 'linktr', 'business.site'];\nconst today = new Date().toISOString().slice(0, 10);\nconst seen = new Set();\nconst rows = [];\n\nfor (const trade of Object.keys(TRADES)) {\n  for (const query of TRADES[trade]) {\n    let res;\n    try {\n      res = await this.helpers.httpRequest({\n        method: 'POST',\n        url: 'https://places.googleapis.com/v1/places:searchText',\n        headers: {\n          'Content-Type': 'application/json',\n          'X-Goog-Api-Key': API_KEY,\n          'X-Goog-FieldMask': FIELD_MASK,\n        },\n        body: { textQuery: query, pageSize: 20 },\n        json: true,\n      });\n    } catch (e) { continue; }\n\n    const area = query.replace(/^(exterminator|pest control|plumber|electrician)\\s/i, '').replace(/\\sNY$/i, '');\n    for (const p of (res.places || [])) {\n      if (!p.id || seen.has(p.id)) continue;\n      const rating = p.rating || 0;\n      const reviews = p.userRatingCount || 0;\n      const uri = (p.websiteUri || '').toLowerCase();\n      const social = SOCIAL.some((s) => uri.includes(s));\n      const hasSite = uri && !social;\n      if (rating < MIN_RATING || reviews < MIN_REVIEWS || hasSite) continue;\n      seen.add(p.id);\n      rows.push({ json: {\n        Business: (p.displayName && p.displayName.text) || '',\n        Trade: trade,\n        Area: area,\n        Rating: rating,\n        Reviews: reviews,\n        Website: uri ? (social ? 'Social only' : 'Has site') : 'None',\n        Phone: p.nationalPhoneNumber || '',\n        Address: p.formattedAddress || '',\n        Maps: p.googleMapsUri || '',\n        Status: 'New',\n        Found: today,\n      }});\n    }\n  }\n}\n\nreturn rows;\n"
+      },
+      "id": "node-find",
+      "name": "Find leads (Places API)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "PASTE_YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": []
+        },
+        "options": {}
+      },
+      "id": "node-sheets",
+      "name": "Append to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        820,
+        300
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Select your Google Sheets credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every morning 9am": {
+      "main": [
+        [
+          {
+            "node": "Find leads (Places API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find leads (Places API)": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
